@@ -6,6 +6,7 @@ import {
   generateDeviceKeypair,
   publicKeyToBase64,
 } from './device-keys';
+import { type EcdhWrapContext, wrapKeyForRecipient } from './ecdh';
 import { wipe } from './wipe';
 
 const IDENTITY_SIGN_PREFIX = new TextEncoder().encode('curbapps/identity/v1\0');
@@ -136,4 +137,28 @@ export function parseAccountIdentityDocument(
 export function wipeIdentitySecrets(identity: GeneratedAccountIdentity): void {
   wipe(identity.x25519.privateKey);
   wipe(identity.ed25519.privateKey);
+}
+
+/**
+ * Wrap a key for a published account identity. Verifies the Ed25519
+ * signature before ECDH so a Worker-injected public key cannot receive
+ * the wrap.
+ */
+export async function wrapKeyForVerifiedIdentity(
+  rawKey: Uint8Array,
+  myPriv: Uint8Array,
+  myPub: Uint8Array,
+  document: AccountIdentityDocument,
+  context: EcdhWrapContext,
+): Promise<Uint8Array> {
+  if (!verifyAccountIdentityDocument(document)) {
+    throw new Error('identity: signature is invalid');
+  }
+  return wrapKeyForRecipient(
+    rawKey,
+    myPriv,
+    base64ToBytes(document.x25519PublicKeyBase64),
+    context,
+    myPub,
+  );
 }

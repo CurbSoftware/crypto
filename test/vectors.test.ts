@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { aesGcmDecrypt, aesGcmEncrypt, aesKwWrap } from '../src/aes';
+import {
+  aesGcmDecrypt,
+  aesGcmEncrypt,
+  aesKwUnwrap,
+  aesKwWrap,
+} from '../src/aes';
 import { deriveMasterKey } from '../src/argon2';
 import { base64ToBytes, bytesToBase64 } from '../src/base64';
 import { bytesToHex } from '../src/wipe';
@@ -54,5 +59,17 @@ describe('published vectors', () => {
     const v = vectors.aesKw;
     const wrapped = await aesKwWrap(hexToBytes(v.keyHex), hexToBytes(v.kekHex));
     expect(bytesToHex(wrapped)).toBe(v.wrappedHex);
+    expect(bytesToHex(await aesKwUnwrap(wrapped, hexToBytes(v.kekHex)))).toBe(
+      v.keyHex,
+    );
+  });
+
+  it('matches AES-KW-256', async () => {
+    const v = vectors.aesKw256;
+    const wrapped = await aesKwWrap(hexToBytes(v.keyHex), hexToBytes(v.kekHex));
+    expect(bytesToHex(wrapped)).toBe(v.wrappedHex);
+    expect(bytesToHex(await aesKwUnwrap(wrapped, hexToBytes(v.kekHex)))).toBe(
+      v.keyHex,
+    );
   });
 });

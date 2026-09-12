@@ -92,4 +92,5 @@ the password, MK, or AEK.
 ## Test vectors
 
 See `vectors/v1.json`. `pnpm test` checks them in TypeScript.
-`python3 verify/verify.py` checks them independently.
+`python3 verify/verify.py` checks them independently. AES-KW includes the
+RFC 3394 §4.1 (128-bit) and §4.6 (256-bit) wrap/unwrap pairs.

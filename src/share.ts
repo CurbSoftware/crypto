@@ -33,6 +33,7 @@ import { wipe } from './wipe';
 const SHARE_KEY_BYTES = 32;
 const SHARE_SALT_BYTES = 16;
 export const SHARE_PBKDF2_ITERATIONS = 100_000;
+const SHARE_PBKDF2_MAX_ITERATIONS = 1_000_000;
 
 export type ShareKdfDescriptor =
   | {
@@ -98,6 +99,13 @@ export async function deriveShareKek(
     kdf && 'iterations' in kdf && typeof kdf.iterations === 'number'
       ? kdf.iterations
       : SHARE_PBKDF2_ITERATIONS;
+  if (
+    !Number.isFinite(iterations) ||
+    iterations < 1 ||
+    iterations > SHARE_PBKDF2_MAX_ITERATIONS
+  ) {
+    throw new Error('share PBKDF2 iterations are out of range');
+  }
   return pbkdf2Async(sha256, password, salt, {
     c: iterations,
     dkLen: SHARE_KEY_BYTES,

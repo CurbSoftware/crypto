@@ -128,6 +128,21 @@ describe('aesKwWrap / aesKwUnwrap (RFC 3394)', () => {
     expect(await aesKwUnwrap(wrapped, kek)).toEqual(keyData);
   });
 
+  it('matches the RFC 3394 section 4.6 256-bit test vector', async () => {
+    const kek = hexToBytes(
+      '000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F',
+    );
+    const keyData = hexToBytes(
+      '00112233445566778899AABBCCDDEEFF000102030405060708090A0B0C0D0E0F',
+    );
+    const expected =
+      '28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21';
+
+    const wrapped = await aesKwWrap(keyData, kek);
+    expect(bytesToHex(wrapped)).toBe(expected);
+    expect(await aesKwUnwrap(wrapped, kek)).toEqual(keyData);
+  });
+
   it('round-trips a 32-byte key', async () => {
     const kek = randomBytes(32);
     const keyData = randomBytes(32);

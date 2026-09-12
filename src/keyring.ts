@@ -1,3 +1,4 @@
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
@@ -19,13 +20,18 @@ import { base64ToBytes, bytesToBase64 } from './base64';
 import {
   type DeviceKeypair,
   generateDeviceKeypair,
+  importDevicePrivateKey,
   publicKeyToBase64,
 } from './device-keys';
 import type {
   AccountIdentityDocument,
   GeneratedAccountIdentity,
 } from './identity';
-import { generateAccountIdentity, wipeIdentitySecrets } from './identity';
+import {
+  generateAccountIdentity,
+  verifyAccountIdentityDocument,
+  wipeIdentitySecrets,
+} from './identity';
 import type {
   DeviceKeyRecordV1,
   EncryptedEnvelopeV1,
@@ -336,6 +342,66 @@ export class Keyring {
       material.recoveryBlob.account.identityPublicKeySignatureBase64 ?? '';
   }
 
+  /**
+   * Bind claimed identity public keys to the AEK by opening the wrapped
+   * private halves. A swapped recovery-blob identity that is internally
+   * signed still fails here unless it was encrypted under this AEK.
+   */
+  private async assertIdentityMatchesAek(): Promise<void> {
+    const aek = this.requireAek();
+
+    if (this.wrappedIdentityPrivateKey) {
+      const privateKey = await aesGcmDecrypt(
+        this.wrappedIdentityPrivateKey,
+        aek,
+      );
+      try {
+        const derived = publicKeyToBase64(
+          importDevicePrivateKey(privateKey).publicKey,
+        );
+        if (
+          this.identityPublicKeyBase64 &&
+          derived !== this.identityPublicKeyBase64
+        ) {
+          throw new Error(
+            'Keyring.unlock: identity public key does not match the AEK-wrapped private key',
+          );
+        }
+        this.identityPublicKeyBase64 = derived;
+      } finally {
+        wipe(privateKey);
+      }
+    }
+
+    if (this.wrappedIdentitySigningPrivateKey) {
+      const privateKey = await aesGcmDecrypt(
+        this.wrappedIdentitySigningPrivateKey,
+        aek,
+      );
+      try {
+        const seed =
+          privateKey.length === 64 ? privateKey.subarray(0, 32) : privateKey;
+        const derived = bytesToBase64(ed25519.getPublicKey(seed));
+        if (
+          this.identitySigningPublicKeyBase64 &&
+          derived !== this.identitySigningPublicKeyBase64
+        ) {
+          throw new Error(
+            'Keyring.unlock: signing public key does not match the AEK-wrapped private key',
+          );
+        }
+        this.identitySigningPublicKeyBase64 = derived;
+      } finally {
+        wipe(privateKey);
+      }
+    }
+
+    const document = this.getIdentityDocument();
+    if (document && !verifyAccountIdentityDocument(document)) {
+      throw new Error('Keyring.unlock: identity signature is invalid');
+    }
+  }
+
   private async generateDeviceKeyRecord(): Promise<DeviceKeyRecordV1> {
     const keypair: DeviceKeypair = await generateDeviceKeypair();
     const wrappedPrivateKey = await aesGcmEncrypt(
@@ -393,6 +459,7 @@ export class Keyring {
     this.deviceKeyRecords = material.recoveryBlob.account.deviceKeys;
     this.restoreIdentityFromMaterial(material);
     this.argon2Params = params;
+    await this.assertIdentityMatchesAek();
   }
 
   /** Unlock directly from a raw AEK, e.g. from a biometric vault. */
@@ -411,13 +478,25 @@ export class Keyring {
     rawAek: Uint8Array,
     material: KeyringMaterial,
   ): Promise<void> {
-    this.aek = asAccountKey(new Uint8Array(rawAek));
+    const aek = asAccountKey(new Uint8Array(rawAek));
+    const ok = await verifyAekVerifier(
+      material.wrappedAek.verifierEnvelope,
+      aek,
+      material.wrappedAek.kdf,
+    );
+    if (!ok) {
+      wipe(aek);
+      throw new Error('Keyring.unlockWithAek: AEK does not match material');
+    }
+
+    this.aek = aek;
     this.masterKey = null;
     this.material = material;
     this.accountId = material.recoveryBlob.account.accountId;
     this.deviceKeyRecords = material.recoveryBlob.account.deviceKeys;
     this.restoreIdentityFromMaterial(material);
     this.argon2Params = kdfToArgon2Params(material.wrappedAek.kdf);
+    await this.assertIdentityMatchesAek();
   }
 
   /** Export a copy of the raw AEK for a host `SecureAekStore`. Throws if locked. */

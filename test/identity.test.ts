@@ -10,6 +10,7 @@ import {
 import {
   generateAccountIdentity,
   verifyAccountIdentityDocument,
+  wrapKeyForVerifiedIdentity,
 } from '../src/identity';
 
 describe('identity', () => {
@@ -27,6 +28,45 @@ describe('identity', () => {
       x25519PublicKeyBase64: publicKeyToBase64(other.publicKey),
     };
     expect(verifyAccountIdentityDocument(tampered)).toBe(false);
+  });
+
+  it('wraps only after the identity document verifies', async () => {
+    const grantor = await generateDeviceKeypair();
+    const identity = await generateAccountIdentity();
+    const entityKey = randomBytes(32);
+    const context = { purpose: 'grant', grantId: 'g1' };
+
+    const wrapped = await wrapKeyForVerifiedIdentity(
+      entityKey,
+      grantor.privateKey,
+      grantor.publicKey,
+      identity.document,
+      context,
+    );
+    const unwrapped = await unwrapKeyForRecipient(
+      wrapped,
+      identity.x25519.privateKey,
+      grantor.publicKey,
+      context,
+      identity.x25519.publicKey,
+    );
+    expect(unwrapped).toEqual(entityKey);
+
+    const tampered = {
+      ...identity.document,
+      x25519PublicKeyBase64: publicKeyToBase64(
+        (await generateDeviceKeypair()).publicKey,
+      ),
+    };
+    await expect(
+      wrapKeyForVerifiedIdentity(
+        entityKey,
+        grantor.privateKey,
+        grantor.publicKey,
+        tampered,
+        context,
+      ),
+    ).rejects.toThrow('signature is invalid');
   });
 });
 

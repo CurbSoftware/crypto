@@ -66,6 +66,16 @@ def main() -> int:
         print("aes-kw unwrap mismatch", file=sys.stderr)
         return 1
 
+    wrap256 = payload["aesKw256"]
+    wrapped256 = aes_key_wrap(hexd(wrap256["kekHex"]), hexd(wrap256["keyHex"]))
+    if wrapped256.hex() != wrap256["wrappedHex"]:
+        print("aes-kw-256 wrap mismatch", file=sys.stderr)
+        return 1
+    unwrapped256 = aes_key_unwrap(hexd(wrap256["kekHex"]), wrapped256)
+    if unwrapped256.hex() != wrap256["keyHex"]:
+        print("aes-kw-256 unwrap mismatch", file=sys.stderr)
+        return 1
+
     print("ok")
     return 0
 
@@ -85,6 +95,14 @@ def generate() -> None:
     kek = bytes.fromhex("000102030405060708090A0B0C0D0E0F")
     wrap_key = bytes.fromhex("00112233445566778899AABBCCDDEEFF")
     wrapped = aes_key_wrap(kek, wrap_key)
+
+    kek256 = bytes.fromhex(
+        "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
+    )
+    wrap_key256 = bytes.fromhex(
+        "00112233445566778899AABBCCDDEEFF000102030405060708090A0B0C0D0E0F"
+    )
+    wrapped256 = aes_key_wrap(kek256, wrap_key256)
 
     payload = {
         "argon2id": {
@@ -108,6 +126,11 @@ def generate() -> None:
             "kekHex": kek.hex(),
             "keyHex": wrap_key.hex(),
             "wrappedHex": wrapped.hex(),
+        },
+        "aesKw256": {
+            "kekHex": kek256.hex(),
+            "keyHex": wrap_key256.hex(),
+            "wrappedHex": wrapped256.hex(),
         },
     }
     VECTORS.parent.mkdir(parents=True, exist_ok=True)

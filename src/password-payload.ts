@@ -72,7 +72,9 @@ async function decryptLegacyPasswordPayload(
   ciphertext: string,
   password: string,
 ): Promise<string> {
-  const parsed = JSON.parse(atob(ciphertext)) as {
+  const parsed = JSON.parse(
+    new TextDecoder().decode(base64ToBytes(ciphertext)),
+  ) as {
     salt?: unknown;
     iv?: unknown;
     data?: unknown;
@@ -142,7 +144,7 @@ export async function decryptPasswordPayload(
   }
 
   try {
-    return await decryptLegacyPasswordPayload(ciphertext, password);
+    return await decryptLegacyPasswordPayload(ciphertext.trim(), password);
   } catch {
     throw new Error(
       'Failed to decrypt data - incorrect password or corrupted file',

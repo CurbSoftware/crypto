@@ -72,6 +72,34 @@ describe('keyring', () => {
     );
   });
 
+  it('rejects a recovery blob whose identity public key does not match the AEK wrap', async () => {
+    const keyring = await Keyring.createKeyring({ password: PASSWORD });
+    const material = keyring.getMaterial()!;
+    const other = await Keyring.createKeyring({ password: PASSWORD });
+    const swapped = {
+      wrappedAek: material.wrappedAek,
+      recoveryBlob: buildRecoveryBlob({
+        accountId: material.recoveryBlob.account.accountId,
+        wrappedAek: material.wrappedAek,
+        deviceKeys: material.recoveryBlob.account.deviceKeys,
+        identityPublicKeyBase64: other.getIdentityPublicKey() ?? undefined,
+        wrappedIdentityPrivateKey:
+          material.recoveryBlob.account.wrappedIdentityPrivateKey,
+        identitySigningPublicKeyBase64:
+          material.recoveryBlob.account.identitySigningPublicKeyBase64,
+        wrappedIdentitySigningPrivateKey:
+          material.recoveryBlob.account.wrappedIdentitySigningPrivateKey,
+        identityPublicKeySignatureBase64:
+          material.recoveryBlob.account.identityPublicKeySignatureBase64,
+      }),
+    };
+
+    const fresh = new Keyring();
+    await expect(fresh.unlock(PASSWORD, swapped)).rejects.toThrow(
+      'identity public key',
+    );
+  });
+
   it('encrypts and decrypts entities', async () => {
     const keyring = await Keyring.createKeyring({ password: PASSWORD });
     const plaintext = encode('entity secret');
@@ -257,6 +285,17 @@ describe('keyring', () => {
     expect(fresh.getMaterial()).not.toBeNull();
     expect(fresh.getRecoveryBlob()).not.toBeNull();
     expect(await fresh.decryptEntity(ciphertext)).toEqual(encode('secret'));
+  });
+
+  it('unlockWithAek rejects an AEK that does not match the verifier', async () => {
+    const keyring = await Keyring.createKeyring({ password: PASSWORD });
+    const material = keyring.getMaterial()!;
+    const other = await Keyring.createKeyring({ password: PASSWORD });
+
+    const fresh = new Keyring();
+    await expect(
+      fresh.unlockWithAek(other.exportAek(), material),
+    ).rejects.toThrow('does not match material');
   });
 
   it('changes the password while preserving encrypted data', async () => {

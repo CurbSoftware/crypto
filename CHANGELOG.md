@@ -10,7 +10,7 @@
 - Argon2id note shares; PBKDF2 shares still decrypt.
 - Opaque key types, `SecureAekStore`, lookup HMAC helper.
 - Room, password-payload, sealed-file, XChaCha, and chunked-attachment APIs.
-- Published test vectors and a Python verifier.
+- Published test vectors (including RFC 3394 AES-KW-256) and a Python verifier.
 
 ## 0.1.0
 
