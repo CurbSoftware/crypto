@@ -4,6 +4,7 @@ import { randomBytes } from '../src/aes';
 import {
   decryptPasswordPayload,
   encryptPasswordPayload,
+  createPasswordPayloadCipher,
 } from '../src/password-payload';
 import { decryptChunked, encryptChunked } from '../src/stream';
 import { xchachaDecrypt, xchachaEncrypt } from '../src/xchacha';
@@ -51,6 +52,23 @@ describe('password payload', () => {
     expect(
       await decryptPasswordPayload(ciphertext, 'payload-password-ok'),
     ).toBe('project secret');
+  });
+
+  it('reuses one derived key across a batch', async () => {
+    const cipher = await createPasswordPayloadCipher('payload-password-ok');
+    try {
+      const a = await cipher.encrypt('one');
+      const b = await cipher.encrypt('two');
+      expect(JSON.parse(a).kdf.saltBase64).toBe(JSON.parse(b).kdf.saltBase64);
+      expect(await decryptPasswordPayload(a, 'payload-password-ok')).toBe(
+        'one',
+      );
+      expect(await decryptPasswordPayload(b, 'payload-password-ok')).toBe(
+        'two',
+      );
+    } finally {
+      cipher.dispose();
+    }
   });
 
   it('opens a legacy CryptoUtils envelope', async () => {

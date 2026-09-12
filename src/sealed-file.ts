@@ -2,7 +2,8 @@ import { aesGcmDecrypt, aesGcmEncrypt, randomBytes } from './aes';
 import {
   type Argon2Params,
   DEFAULT_ARGON2_PARAMS,
-  deriveMasterKey,
+  assertArgon2UnlockParams,
+  deriveUnlockMasterKey,
   generateSalt,
 } from './argon2';
 import { base64ToBytes, bytesToBase64 } from './base64';
@@ -27,12 +28,13 @@ export function buildSealedFileKdfHeader(
   salt: Uint8Array = generateSalt(),
   params: Argon2Params = DEFAULT_ARGON2_PARAMS,
 ): SealedFileKdfHeader {
+  const floor = assertArgon2UnlockParams(params);
   return {
     alg: 'argon2id',
     salt: bytesToBase64(salt),
-    t: params.iterations,
-    m: params.memoryKb,
-    p: params.parallelism,
+    t: floor.iterations,
+    m: floor.memoryKb,
+    p: floor.parallelism,
   };
 }
 
@@ -63,13 +65,12 @@ export function parseSealedFileKdfHeader(json: string): SealedFileKdfHeader {
 export async function deriveSealedFileKey(
   passphrase: string,
   header: SealedFileKdfHeader,
-  override?: Partial<Argon2Params>,
 ): Promise<Uint8Array> {
-  return deriveMasterKey(passphrase, base64ToBytes(header.salt), {
+  return deriveUnlockMasterKey(passphrase, base64ToBytes(header.salt), {
     memoryKb: header.m,
     iterations: header.t,
     parallelism: header.p,
-    ...override,
+    hashLength: DEFAULT_ARGON2_PARAMS.hashLength,
   });
 }
 

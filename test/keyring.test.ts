@@ -100,6 +100,30 @@ describe('keyring', () => {
     );
   });
 
+  it('rejects a recovery blob that claims an identity without AEK-wrapped keys', async () => {
+    const keyring = await Keyring.createKeyring({ password: PASSWORD });
+    const material = keyring.getMaterial()!;
+    const stripped = {
+      wrappedAek: material.wrappedAek,
+      recoveryBlob: buildRecoveryBlob({
+        accountId: material.recoveryBlob.account.accountId,
+        wrappedAek: material.wrappedAek,
+        deviceKeys: material.recoveryBlob.account.deviceKeys,
+        identityPublicKeyBase64:
+          material.recoveryBlob.account.identityPublicKeyBase64,
+        identitySigningPublicKeyBase64:
+          material.recoveryBlob.account.identitySigningPublicKeyBase64,
+        identityPublicKeySignatureBase64:
+          material.recoveryBlob.account.identityPublicKeySignatureBase64,
+      }),
+    };
+
+    const fresh = new Keyring();
+    await expect(fresh.unlock(PASSWORD, stripped)).rejects.toThrow(
+      'missing its AEK wrap',
+    );
+  });
+
   it('encrypts and decrypts entities', async () => {
     const keyring = await Keyring.createKeyring({ password: PASSWORD });
     const plaintext = encode('entity secret');

@@ -38,6 +38,26 @@ export async function encryptPasswordPayload(
   plaintext: string,
   password: string,
 ): Promise<string> {
+  const cipher = await createPasswordPayloadCipher(password);
+  try {
+    return cipher.encrypt(plaintext);
+  } finally {
+    cipher.dispose();
+  }
+}
+
+export interface PasswordPayloadCipher {
+  encrypt(plaintext: string): Promise<string>;
+  dispose(): void;
+}
+
+/**
+ * Derive the project-password key once, then encrypt many fields. Dispose
+ * after the batch so the key does not linger.
+ */
+export async function createPasswordPayloadCipher(
+  password: string,
+): Promise<PasswordPayloadCipher> {
   const salt = generateSalt();
   const kdf: KdfDescriptor = {
     algorithm: 'ARGON2ID',
@@ -52,20 +72,30 @@ export async function encryptPasswordPayload(
     salt,
     DEFAULT_ARGON2_PARAMS,
   );
-  try {
-    const enc = await aesGcmEncrypt(new TextEncoder().encode(plaintext), key, {
-      keyId: PAYLOAD_KEY_ID,
-    });
-    const payload: PasswordPayloadV1 = {
-      v: 1,
-      alg: 'argon2id-aes-gcm-256',
-      kdf,
-      enc,
-    };
-    return JSON.stringify(payload);
-  } finally {
-    wipe(key);
-  }
+  let live = true;
+  return {
+    async encrypt(plaintext: string): Promise<string> {
+      if (!live) {
+        throw new Error('password payload cipher has been disposed');
+      }
+      const enc = await aesGcmEncrypt(
+        new TextEncoder().encode(plaintext),
+        key,
+        { keyId: PAYLOAD_KEY_ID },
+      );
+      const payload: PasswordPayloadV1 = {
+        v: 1,
+        alg: 'argon2id-aes-gcm-256',
+        kdf,
+        enc,
+      };
+      return JSON.stringify(payload);
+    },
+    dispose(): void {
+      live = false;
+      wipe(key);
+    },
+  };
 }
 
 async function decryptLegacyPasswordPayload(
@@ -115,6 +145,16 @@ async function decryptLegacyPasswordPayload(
     return new TextDecoder().decode(plaintext);
   } finally {
     wipe(key);
+  }
+}
+
+export function isPasswordPayloadCiphertext(value: string): boolean {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    return isPasswordPayloadV1(JSON.parse(trimmed));
+  } catch {
+    return false;
   }
 }
 

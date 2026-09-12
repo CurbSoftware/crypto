@@ -210,7 +210,10 @@ function kdfToArgon2Params(kdf: KdfDescriptor): Argon2Params {
 }
 
 function randomId(prefix: string): string {
-  return `${prefix}${bytesToBase64(randomBytes(9)).replace(/=+$/g, '')}`;
+  return `${prefix}${bytesToBase64(randomBytes(9))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')}`;
 }
 
 function resolveArgon2Params(partial?: Partial<Argon2Params>): Argon2Params {
@@ -350,6 +353,20 @@ export class Keyring {
   private async assertIdentityMatchesAek(): Promise<void> {
     const aek = this.requireAek();
 
+    if (this.identityPublicKeyBase64 && !this.wrappedIdentityPrivateKey) {
+      throw new Error(
+        'Keyring.unlock: identity public key is missing its AEK wrap',
+      );
+    }
+    if (
+      this.identitySigningPublicKeyBase64 &&
+      !this.wrappedIdentitySigningPrivateKey
+    ) {
+      throw new Error(
+        'Keyring.unlock: signing public key is missing its AEK wrap',
+      );
+    }
+
     if (this.wrappedIdentityPrivateKey) {
       const privateKey = await aesGcmDecrypt(
         this.wrappedIdentityPrivateKey,
@@ -452,6 +469,7 @@ export class Keyring {
       throw new Error('Keyring.unlock: incorrect password');
     }
 
+    this.lock();
     this.aek = aek;
     this.masterKey = masterKey;
     this.material = material;
@@ -459,11 +477,17 @@ export class Keyring {
     this.deviceKeyRecords = material.recoveryBlob.account.deviceKeys;
     this.restoreIdentityFromMaterial(material);
     this.argon2Params = params;
-    await this.assertIdentityMatchesAek();
+    try {
+      await this.assertIdentityMatchesAek();
+    } catch (err) {
+      this.lock();
+      throw err;
+    }
   }
 
   /** Unlock directly from a raw AEK, e.g. from a biometric vault. */
   async autoUnlock(rawAek: Uint8Array): Promise<void> {
+    this.lock();
     this.aek = asAccountKey(new Uint8Array(rawAek));
     this.masterKey = null;
     this.material = null;
@@ -489,6 +513,7 @@ export class Keyring {
       throw new Error('Keyring.unlockWithAek: AEK does not match material');
     }
 
+    this.lock();
     this.aek = aek;
     this.masterKey = null;
     this.material = material;
@@ -496,7 +521,12 @@ export class Keyring {
     this.deviceKeyRecords = material.recoveryBlob.account.deviceKeys;
     this.restoreIdentityFromMaterial(material);
     this.argon2Params = kdfToArgon2Params(material.wrappedAek.kdf);
-    await this.assertIdentityMatchesAek();
+    try {
+      await this.assertIdentityMatchesAek();
+    } catch (err) {
+      this.lock();
+      throw err;
+    }
   }
 
   /** Export a copy of the raw AEK for a host `SecureAekStore`. Throws if locked. */
@@ -562,6 +592,7 @@ export class Keyring {
 
     wipe(oldMasterKey);
 
+    this.lock();
     this.aek = aek;
     this.masterKey = newMasterKey;
     this.material = {
