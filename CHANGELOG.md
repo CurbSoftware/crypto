@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Version 3 domain envelopes. Each scope gets its own random 256-bit key, wrapped with the existing AEK.
+- Resource AAD binds account, scope, entity id, entity kind, key epoch, and protocol version. No server revision.
+- Domain lookup HMACs use a scope-separated HKDF info string. Account lookup HMACs are unchanged.
+- Version 1 envelopes and recovery blob version 1 still open.
+
 ## 0.2.0
 
 - Standalone package: no `@curbapps/core` or other workspace dependencies.

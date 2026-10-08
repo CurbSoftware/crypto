@@ -1,0 +1,17 @@
+{
+  "aekHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "domainKeyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "ivHex": "000102030405060708090a0b",
+  "plaintextHex": "646f6d61696e20766563746f72",
+  "aadHex": "63757262617070732f646f6d61696e2d656e76656c6f70652f763100616363745f3100637572627061676500626f6f6b6d61726b5f3100626f6f6b6d61726b00310031",
+  "ciphertextHex": "383d30c6235bcb9ad99abda954",
+  "tagHex": "fafb8e4531b2b9bcf8daf5351482d708",
+  "wrappedKeyHex": "04f8a3c3c302d3b0b7e94b14dcf85ad1da69cd74056ed7907d3cb49fb27799a4104db058f2901adb",
+  "keyId": "dk_v1_77bf8c459317772129da953520319bca",
+  "accountId": "acct_1",
+  "scope": "curbpage",
+  "entityId": "bookmark_1",
+  "entityKind": "bookmark",
+  "epoch": 1,
+  "protocolVersion": 1
+}

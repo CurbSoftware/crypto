@@ -32,7 +32,28 @@ export interface EncryptedEnvelopeV2 {
   aadBase64?: string;
 }
 
-export type EncryptedEnvelope = EncryptedEnvelopeV1 | EncryptedEnvelopeV2;
+/**
+ * AES-GCM payload sealed under a per-scope domain key. `wrappedKeyBase64` is
+ * that same key, AES-KW wrapped by the account AEK, so an AEK holder can read
+ * it. The AAD binds account, scope, entity id, entity kind, key epoch, and
+ * protocol version. It does not include a server revision.
+ */
+export interface EncryptedEnvelopeV3 {
+  version: 3;
+  algorithm: 'AES-GCM-256';
+  keyId: string;
+  scope: 'curbpage' | 'curbplace' | 'curbtube' | 'curbmetrics' | 'shared-vault';
+  epoch: number;
+  protocolVersion: 1;
+  ivBase64: string;
+  ciphertextBase64: string;
+  authTagBase64: string;
+  aadBase64: string;
+  wrappedKeyBase64: string;
+}
+
+export type EncryptedEnvelope =
+  EncryptedEnvelopeV1 | EncryptedEnvelopeV2 | EncryptedEnvelopeV3;
 
 export interface WrappedAccountKeyV1 {
   version: 1;
@@ -89,4 +110,10 @@ export function isEncryptedEnvelopeV2(
   envelope: EncryptedEnvelope,
 ): envelope is EncryptedEnvelopeV2 {
   return envelope.version === 2;
+}
+
+export function isEncryptedEnvelopeV3(envelope: {
+  version: number;
+}): envelope is EncryptedEnvelopeV3 {
+  return envelope.version === 3;
 }

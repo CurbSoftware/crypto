@@ -3,6 +3,7 @@
 ## Assets
 
 - Account encryption key (AEK)
+- Per-scope domain keys (random 256-bit keys wrapped by the AEK)
 - Master password and derived master key
 - Entity plaintext (bookmarks, notes, vault entries, OTP secrets, ...)
 - Identity private keys (X25519, Ed25519)
@@ -20,6 +21,14 @@ timestamps. Cannot decrypt without the password or a device AEK.
 Can withhold or replay ciphertext. Can try to swap a recovery blob (blocked
 by ETag compare-and-swap). Can try to inject an identity public key; signed
 identity documents make that detectable. Cannot mint a valid AEK verifier.
+
+### Domain keys
+
+Each scope has its own random key, wrapped by the AEK. A version 3 envelope
+also carries that wrap, so anyone who holds the AEK can open every scope. A
+client that holds only one domain key cannot open the others. Grants that
+deliver a single domain key are not issued by this package yet. The recovery
+blob stays version 1 and does not include the domain-key set.
 
 ### Stolen browser profile (auto-unlock)
 

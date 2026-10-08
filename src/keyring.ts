@@ -32,13 +32,26 @@ import {
   verifyAccountIdentityDocument,
   wipeIdentitySecrets,
 } from './identity';
+import {
+  type DomainKeySecret,
+  type DomainKeySetV1,
+  type DomainResourceBinding,
+  type DomainScope,
+  DOMAIN_SCOPES,
+  createDomainKeySet,
+  encryptDomainEnvelope,
+  openDomainEnvelope,
+  unwrapDomainKeySet,
+} from './domain-keys';
 import type {
   DeviceKeyRecordV1,
   EncryptedEnvelopeV1,
+  EncryptedEnvelopeV3,
   EncryptedRecoveryBlobV1,
   KdfDescriptor,
   WrappedAccountKeyV1,
 } from './envelope';
+import { isEncryptedEnvelopeV3 } from './envelope';
 import { hmacLookup as hmacLookupFromAek } from './lookup';
 import { asAccountKey, type AccountKey } from './opaque';
 import { buildRecoveryBlob } from './recovery-blob';
@@ -165,9 +178,32 @@ export async function decryptKeyringEntityEnvelope(
   throw new Error('Keyring entity envelope does not match the active key');
 }
 
+/**
+ * Open either a current AEK envelope or a domain-key envelope. Version 1 still
+ * uses the AEK directly. Version 3 uses the scope key, or the AEK wrap carried
+ * on the envelope when that scope key is not loaded.
+ */
+export async function openEntityEnvelope(
+  envelope: EncryptedEnvelopeV1 | EncryptedEnvelopeV3,
+  aek: Uint8Array,
+  domainKeys?: ReadonlyMap<string, Uint8Array>,
+): Promise<Uint8Array> {
+  if (isEncryptedEnvelopeV3(envelope)) {
+    return openDomainEnvelope(envelope, aek, domainKeys);
+  }
+  return decryptKeyringEntityEnvelope(envelope, aek);
+}
+
 export interface KeyringMaterial {
   wrappedAek: WrappedAccountKeyV1;
   recoveryBlob: EncryptedRecoveryBlobV1;
+  /**
+   * AEK wraps of the per-scope domain keys. Stored beside the recovery blob
+   * so blob bytes, and recovery ETag compare-and-swap, stay unchanged.
+   * ponytail: not inside EncryptedRecoveryBlobV1. A separate CAS record can
+   * publish one account-wide set later.
+   */
+  wrappedDomainKeys?: DomainKeySetV1;
 }
 
 export interface CreateKeyringOptions {
@@ -245,6 +281,8 @@ export class Keyring {
   private identityPublicKeySignatureBase64 = '';
   private accountId = '';
   private argon2Params: Argon2Params = DEFAULT_ARGON2_PARAMS;
+  private domainSecrets = new Map<DomainScope, DomainKeySecret>();
+  private wrappedDomainKeySet: DomainKeySetV1 | null = null;
 
   /** Create a fresh, already-unlocked keyring. */
   static async createKeyring(
@@ -270,6 +308,7 @@ export class Keyring {
     if (options.password !== undefined) {
       await keyring.wrapWithPassword(options.password);
     }
+    await keyring.ensureDomainKeys();
 
     return keyring;
   }
@@ -479,6 +518,7 @@ export class Keyring {
     this.argon2Params = params;
     try {
       await this.assertIdentityMatchesAek();
+      await this.adoptWrappedDomainKeys(material.wrappedDomainKeys);
     } catch (err) {
       this.lock();
       throw err;
@@ -523,6 +563,7 @@ export class Keyring {
     this.argon2Params = kdfToArgon2Params(material.wrappedAek.kdf);
     try {
       await this.assertIdentityMatchesAek();
+      await this.adoptWrappedDomainKeys(material.wrappedDomainKeys);
     } catch (err) {
       this.lock();
       throw err;
@@ -592,13 +633,18 @@ export class Keyring {
 
     wipe(oldMasterKey);
 
+    const domainKeys = this.wrappedDomainKeySet;
     this.lock();
     this.aek = aek;
     this.masterKey = newMasterKey;
     this.material = {
       wrappedAek,
       recoveryBlob: this.buildCurrentRecoveryBlob(wrappedAek),
+      ...(domainKeys ? { wrappedDomainKeys: domainKeys } : {}),
     };
+    if (domainKeys) {
+      await this.importWrappedDomainKeys(domainKeys);
+    }
   }
 
   lock(): void {
@@ -606,6 +652,8 @@ export class Keyring {
     wipe(this.masterKey);
     this.aek = null;
     this.masterKey = null;
+    this.clearDomainSecrets();
+    this.wrappedDomainKeySet = null;
   }
 
   isUnlocked(): boolean {
@@ -621,8 +669,68 @@ export class Keyring {
     });
   }
 
-  async decryptEntity(ciphertext: EncryptedEnvelopeV1): Promise<Uint8Array> {
-    return decryptKeyringEntityEnvelope(ciphertext, this.requireAek());
+  async decryptEntity(
+    ciphertext: EncryptedEnvelopeV1 | EncryptedEnvelopeV3,
+  ): Promise<Uint8Array> {
+    return openEntityEnvelope(
+      ciphertext,
+      this.requireAek(),
+      this.domainKeyMap(),
+    );
+  }
+
+  /** Seal a new record under the scope domain key. Older records stay on the AEK. */
+  async encryptDomainEntity(
+    plaintext: Uint8Array,
+    binding: DomainResourceBinding,
+  ): Promise<EncryptedEnvelopeV3> {
+    await this.ensureDomainKeys();
+    const secret = this.domainSecrets.get(binding.scope);
+    if (!secret) {
+      throw new Error('Domain key for this scope is missing');
+    }
+    if (binding.epoch !== undefined && binding.epoch !== secret.epoch) {
+      throw new Error('Domain key epoch does not match the stored key');
+    }
+    return encryptDomainEnvelope(plaintext, secret.key, this.requireAek(), {
+      ...binding,
+      epoch: secret.epoch,
+    });
+  }
+
+  getWrappedDomainKeys(): DomainKeySetV1 | null {
+    return this.wrappedDomainKeySet;
+  }
+
+  async importWrappedDomainKeys(set: DomainKeySetV1): Promise<void> {
+    const secrets = await unwrapDomainKeySet(set, this.requireAek());
+    this.clearDomainSecrets();
+    for (const secret of secrets) {
+      this.domainSecrets.set(secret.scope, secret);
+    }
+    this.wrappedDomainKeySet = set;
+    this.attachDomainKeysToMaterial();
+  }
+
+  async ensureDomainKeys(): Promise<DomainKeySetV1> {
+    if (
+      this.wrappedDomainKeySet &&
+      this.domainSecrets.size === DOMAIN_SCOPES.length
+    ) {
+      return this.wrappedDomainKeySet;
+    }
+    if (this.wrappedDomainKeySet) {
+      await this.importWrappedDomainKeys(this.wrappedDomainKeySet);
+      return this.wrappedDomainKeySet;
+    }
+    const created = await createDomainKeySet(this.requireAek());
+    this.clearDomainSecrets();
+    for (const secret of created.secrets) {
+      this.domainSecrets.set(secret.scope, secret);
+    }
+    this.wrappedDomainKeySet = created.set;
+    this.attachDomainKeysToMaterial();
+    return created.set;
   }
 
   /**
@@ -665,6 +773,45 @@ export class Keyring {
       x25519PublicKeyBase64: this.identityPublicKeyBase64,
       ed25519PublicKeyBase64: this.identitySigningPublicKeyBase64,
       signatureBase64: this.identityPublicKeySignatureBase64,
+    };
+  }
+
+  private async adoptWrappedDomainKeys(
+    set: DomainKeySetV1 | undefined,
+  ): Promise<void> {
+    if (!set) return;
+    try {
+      await this.importWrappedDomainKeys(set);
+    } catch {
+      this.clearDomainSecrets();
+      this.wrappedDomainKeySet = null;
+      if (this.material?.wrappedDomainKeys) {
+        const { wrappedDomainKeys: _ignored, ...rest } = this.material;
+        this.material = rest;
+      }
+    }
+  }
+
+  private domainKeyMap(): Map<string, Uint8Array> {
+    const keys = new Map<string, Uint8Array>();
+    for (const secret of this.domainSecrets.values()) {
+      keys.set(secret.keyId, secret.key);
+    }
+    return keys;
+  }
+
+  private clearDomainSecrets(): void {
+    for (const secret of this.domainSecrets.values()) {
+      wipe(secret.key);
+    }
+    this.domainSecrets.clear();
+  }
+
+  private attachDomainKeysToMaterial(): void {
+    if (!this.material || !this.wrappedDomainKeySet) return;
+    this.material = {
+      ...this.material,
+      wrappedDomainKeys: this.wrappedDomainKeySet,
     };
   }
 

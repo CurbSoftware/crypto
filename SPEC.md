@@ -11,6 +11,10 @@ password
        -> AES-KW-256 wraps AEK
 AEK (32 random bytes)
   -> AES-256-GCM entity payloads (EncryptedEnvelopeV1)
+  -> AES-KW-256 wraps one random 32-byte domain key per scope
+       curbpage, curbplace, curbtube, curbmetrics, shared-vault
+       -> AES-256-GCM entity payloads (EncryptedEnvelopeV3)
+       -> HKDF-SHA256 -> HMAC-SHA256 domain lookup digests
   -> AES-256-GCM device X25519 private key
   -> AES-256-GCM identity X25519 private key
   -> AES-256-GCM identity Ed25519 private key
@@ -51,7 +55,29 @@ JSON:
 - `authTagBase64`: 16 bytes
 - `aadBase64`
 
-Used for chunked attachments. Entity writes remain v1.
+Used for chunked attachments. Account-key entity writes remain v1.
+
+### EncryptedEnvelopeV3
+
+Domain-key entity payload. JSON:
+
+- `version`: `3`
+- `algorithm`: `AES-GCM-256`
+- `keyId`: `dk_v1_` + 16-byte HKDF identity (`curbapps/domain-key-id/v1`)
+- `scope`: `curbpage`, `curbplace`, `curbtube`, `curbmetrics`, or `shared-vault`
+- `epoch`: client key epoch, starting at `1`
+- `protocolVersion`: `1`
+- `ivBase64`: 12 bytes
+- `ciphertextBase64`
+- `authTagBase64`: 16 bytes
+- `aadBase64`
+- `wrappedKeyBase64`: AES-KW-256 of the domain key under the existing AEK
+
+AAD is `curbapps/domain-envelope/v1\0` + account id, scope, entity id, entity
+kind, epoch, and protocol version, separated by NUL. It does not include a
+server row revision. Version 1 envelopes and `EncryptedRecoveryBlobV1` are
+unchanged. Domain-key lookup info is `curbapps/lookup/domain/v1\0` + scope,
+which is not the account lookup info `curbapps/lookup/v1`.
 
 ### WrappedAccountKeyV1
 
@@ -91,6 +117,7 @@ the password, MK, or AEK.
 
 ## Test vectors
 
-See `vectors/v1.json`. `pnpm test` checks them in TypeScript.
+See `vectors/v1.json` and `vectors/domain-v1.json`. `pnpm test` checks them
+in TypeScript.
 `python3 verify/verify.py` checks them independently. AES-KW includes the
 RFC 3394 §4.1 (128-bit) and §4.6 (256-bit) wrap/unwrap pairs.

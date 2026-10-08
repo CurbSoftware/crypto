@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import sys
 from pathlib import Path
@@ -13,6 +15,7 @@ from cryptography.hazmat.primitives.keywrap import aes_key_unwrap, aes_key_wrap
 
 ROOT = Path(__file__).resolve().parents[1]
 VECTORS = ROOT / "vectors" / "v1.json"
+DOMAIN_VECTORS = ROOT / "vectors" / "domain-v1.json"
 
 
 def b64(data: bytes) -> str:
@@ -29,6 +32,46 @@ def b64d(value: str) -> bytes:
 
 def hexd(value: str) -> bytes:
     return bytes.fromhex(value)
+
+
+def hkdf_sha256(ikm: bytes, info: bytes, length: int) -> bytes:
+    """RFC 5869 with an empty salt, matching @noble/hashes."""
+    prk = hmac.new(b"\x00" * 32, ikm, hashlib.sha256).digest()
+    okm = b""
+    block = b""
+    counter = 1
+    while len(okm) < length:
+        block = hmac.new(
+            prk, block + info + bytes([counter]), hashlib.sha256
+        ).digest()
+        okm += block
+        counter += 1
+    return okm[:length]
+
+
+def check_domain_vector() -> str | None:
+    domain = json.loads(DOMAIN_VECTORS.read_text())
+    if b"revision" in bytes.fromhex(domain["aadHex"]):
+        return "domain aad binds a server revision"
+    aes = AESGCM(hexd(domain["domainKeyHex"]))
+    ciphertext = aes.encrypt(
+        hexd(domain["ivHex"]),
+        hexd(domain["plaintextHex"]),
+        hexd(domain["aadHex"]),
+    )
+    body, tag = ciphertext[:-16], ciphertext[-16:]
+    if body.hex() != domain["ciphertextHex"] or tag.hex() != domain["tagHex"]:
+        return "domain aes-gcm mismatch"
+    wrapped = aes_key_wrap(hexd(domain["aekHex"]), hexd(domain["domainKeyHex"]))
+    if wrapped.hex() != domain["wrappedKeyHex"]:
+        return "domain aes-kw mismatch"
+    if aes_key_unwrap(hexd(domain["aekHex"]), wrapped).hex() != domain["domainKeyHex"]:
+        return "domain aes-kw unwrap mismatch"
+    info = b"curbapps/domain-key-id/v1\0curbpage\x001"
+    key_id = "dk_v1_" + hkdf_sha256(hexd(domain["domainKeyHex"]), info, 16).hex()
+    if key_id != domain["keyId"]:
+        return "domain key id mismatch"
+    return None
 
 
 def main() -> int:
@@ -74,6 +117,11 @@ def main() -> int:
     unwrapped256 = aes_key_unwrap(hexd(wrap256["kekHex"]), wrapped256)
     if unwrapped256.hex() != wrap256["keyHex"]:
         print("aes-kw-256 unwrap mismatch", file=sys.stderr)
+        return 1
+
+    domain_error = check_domain_vector()
+    if domain_error:
+        print(domain_error, file=sys.stderr)
         return 1
 
     print("ok")

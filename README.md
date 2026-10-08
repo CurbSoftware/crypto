@@ -13,7 +13,7 @@ server-side decrypt path.
 
 - Argon2id (OWASP floor: 19 MiB, t=2, p=1) derives a master key from a password
 - AES-KW-256 wraps the random Account Encryption Key (AEK)
-- AES-256-GCM encrypts entity payloads (protocol v1)
+- AES-256-GCM encrypts entity payloads (protocol v1 under the AEK, protocol v3 under a per-scope domain key)
 - XChaCha20-Poly1305 encrypts chunked attachments (protocol v2)
 - X25519 ECDH wraps keys for another device or account
 - Ed25519 signs identity public keys so the sync server cannot inject a peer key

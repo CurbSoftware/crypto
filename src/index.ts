@@ -3,6 +3,7 @@ export * from './aes';
 export * from './argon2';
 export * from './base64';
 export * from './device-keys';
+export * from './domain-keys';
 export * from './ecdh';
 export * from './envelope';
 export * from './identity';

@@ -3,8 +3,9 @@ import type {
   EncryptedEnvelope,
   EncryptedEnvelopeV1,
   EncryptedEnvelopeV2,
+  EncryptedEnvelopeV3,
 } from './envelope';
-import { isEncryptedEnvelopeV2 } from './envelope';
+import { isEncryptedEnvelopeV2, isEncryptedEnvelopeV3 } from './envelope';
 import { xchachaDecrypt, xchachaEncrypt } from './xchacha';
 
 export type ProtocolVersion = 1 | 2;
@@ -31,6 +32,9 @@ export async function decryptPayload(
   envelope: EncryptedEnvelope,
   keyBytes: Uint8Array,
 ): Promise<Uint8Array> {
+  if (isEncryptedEnvelopeV3(envelope)) {
+    throw new Error('Domain envelopes require openEntityEnvelope');
+  }
   if (isEncryptedEnvelopeV2(envelope)) {
     return xchachaDecrypt(envelope, keyBytes);
   }
@@ -39,6 +43,9 @@ export async function decryptPayload(
 
 export function parseEncryptedEnvelope(raw: string): EncryptedEnvelope {
   const parsed = JSON.parse(raw) as Partial<EncryptedEnvelope>;
+  if (parsed.version === 3) {
+    return parsed as EncryptedEnvelopeV3;
+  }
   if (parsed.version === 2) {
     return parsed as EncryptedEnvelopeV2;
   }
