@@ -12,6 +12,7 @@ export * from './keys';
 export * from './lookup';
 export * from './opaque';
 export * from './operators';
+export * from './paper-recovery';
 export * from './password-payload';
 export * from './recovery-blob';
 export * from './room';

@@ -11,6 +11,7 @@ import {
   randomBytes,
 } from './aes';
 import { base64ToBytes, bytesToBase64 } from './base64';
+import { unwrapKeyForRecipient, wrapKeyForRecipient } from './ecdh';
 import type { EncryptedEnvelopeV1, EncryptedEnvelopeV3 } from './envelope';
 import { bytesToHex, wipe } from './wipe';
 
@@ -361,6 +362,120 @@ export async function openDomainEnvelope(
     return await decryptDomainEnvelope(envelope, key);
   } finally {
     wipe(key);
+  }
+}
+
+const DOMAIN_GRANT_PURPOSE = 'domain-key-grant';
+
+export interface AuthorizedDomainGrantWrapV1 {
+  scope: DomainScope;
+  epoch: number;
+  keyId: string;
+  wrappedKeyBase64: string;
+}
+
+/** ECDH wraps of the domain keys a device is allowed to hold. No raw keys. */
+export interface AuthorizedDomainGrantV1 {
+  version: 1;
+  deviceId: string;
+  wraps: AuthorizedDomainGrantWrapV1[];
+}
+
+export async function sealAuthorizedDomainKeys(input: {
+  secrets: readonly DomainKeySecret[];
+  scopes: readonly DomainScope[];
+  senderPrivateKey: Uint8Array;
+  senderPublicKey: Uint8Array;
+  recipientPublicKey: Uint8Array;
+  deviceId: string;
+}): Promise<AuthorizedDomainGrantV1> {
+  assertLabel(input.deviceId, 'deviceId', 128);
+  if (input.scopes.length < 1) {
+    throw new Error('Domain grant has no scopes');
+  }
+
+  const byScope = new Map(
+    input.secrets.map((secret) => [secret.scope, secret]),
+  );
+  const seen = new Set<string>();
+  const wraps: AuthorizedDomainGrantWrapV1[] = [];
+  for (const scope of input.scopes) {
+    if (!isDomainScope(scope) || seen.has(scope)) {
+      throw new Error('Domain grant scope is invalid');
+    }
+    seen.add(scope);
+    const secret = byScope.get(scope);
+    if (!secret) throw new Error('Domain grant scope is missing');
+    const wrapped = await wrapKeyForRecipient(
+      secret.key,
+      input.senderPrivateKey,
+      input.recipientPublicKey,
+      {
+        purpose: DOMAIN_GRANT_PURPOSE,
+        grantId: input.deviceId,
+        entityId: scope,
+      },
+      input.senderPublicKey,
+    );
+    wraps.push({
+      scope,
+      epoch: secret.epoch,
+      keyId: secret.keyId,
+      wrappedKeyBase64: bytesToBase64(wrapped),
+    });
+  }
+
+  return { version: 1, deviceId: input.deviceId, wraps };
+}
+
+export async function openAuthorizedDomainKeys(input: {
+  grant: AuthorizedDomainGrantV1;
+  recipientPrivateKey: Uint8Array;
+  recipientPublicKey: Uint8Array;
+  senderPublicKey: Uint8Array;
+}): Promise<DomainKeySecret[]> {
+  if (
+    input.grant.version !== 1 ||
+    !Array.isArray(input.grant.wraps) ||
+    input.grant.wraps.length < 1
+  ) {
+    throw new Error('Domain grant is invalid');
+  }
+  assertLabel(input.grant.deviceId, 'deviceId', 128);
+
+  const secrets: DomainKeySecret[] = [];
+  try {
+    const seen = new Set<string>();
+    for (const wrap of input.grant.wraps) {
+      if (!isDomainScope(wrap.scope) || seen.has(wrap.scope)) {
+        throw new Error('Domain grant is invalid');
+      }
+      seen.add(wrap.scope);
+      const epoch = assertDomainEpoch(wrap.epoch);
+      const raw = await unwrapKeyForRecipient(
+        base64ToBytes(wrap.wrappedKeyBase64),
+        input.recipientPrivateKey,
+        input.senderPublicKey,
+        {
+          purpose: DOMAIN_GRANT_PURPOSE,
+          grantId: input.grant.deviceId,
+          entityId: wrap.scope,
+        },
+        input.recipientPublicKey,
+      );
+      const key = copyKey(raw);
+      raw.fill(0);
+      const keyId = domainKeyId(key, wrap.scope, epoch);
+      if (keyId !== wrap.keyId) {
+        wipe(key);
+        throw new Error('Domain grant key id does not match');
+      }
+      secrets.push({ scope: wrap.scope, epoch, keyId, key });
+    }
+    return secrets;
+  } catch (error) {
+    for (const secret of secrets) wipe(secret.key);
+    throw error;
   }
 }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- Device grants wrap only the requested scope keys with the existing X25519 ECDH AES-KW path.
+- A client-generated 32-byte paper key wraps the same AEK. `EncryptedRecoveryBlobV1` is unchanged.
+
 ## 0.3.0
 
 - Version 3 domain envelopes. Each scope gets its own random 256-bit key, wrapped with the existing AEK.

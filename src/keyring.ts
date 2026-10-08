@@ -21,6 +21,7 @@ import {
   type DeviceKeypair,
   generateDeviceKeypair,
   importDevicePrivateKey,
+  publicKeyFromBase64,
   publicKeyToBase64,
 } from './device-keys';
 import type {
@@ -33,14 +34,19 @@ import {
   wipeIdentitySecrets,
 } from './identity';
 import {
+  type AuthorizedDomainGrantV1,
   type DomainKeySecret,
   type DomainKeySetV1,
   type DomainResourceBinding,
   type DomainScope,
   DOMAIN_SCOPES,
   createDomainKeySet,
+  decryptDomainEnvelope,
+  domainKeyId,
   encryptDomainEnvelope,
+  isDomainScope,
   openDomainEnvelope,
+  sealAuthorizedDomainKeys,
   unwrapDomainKeySet,
 } from './domain-keys';
 import type {
@@ -53,6 +59,12 @@ import type {
 } from './envelope';
 import { isEncryptedEnvelopeV3 } from './envelope';
 import { hmacLookup as hmacLookupFromAek } from './lookup';
+import {
+  type PaperRecoveryWrapV1,
+  generatePaperRecoveryKey,
+  unwrapAekWithPaperKey,
+  wrapAekWithPaperKey,
+} from './paper-recovery';
 import { asAccountKey, type AccountKey } from './opaque';
 import { buildRecoveryBlob } from './recovery-blob';
 import { bytesToHex, wipe } from './wipe';
@@ -672,6 +684,10 @@ export class Keyring {
   async decryptEntity(
     ciphertext: EncryptedEnvelopeV1 | EncryptedEnvelopeV3,
   ): Promise<Uint8Array> {
+    if (isEncryptedEnvelopeV3(ciphertext)) {
+      const supplied = this.domainKeyMap().get(ciphertext.keyId);
+      if (supplied) return decryptDomainEnvelope(ciphertext, supplied);
+    }
     return openEntityEnvelope(
       ciphertext,
       this.requireAek(),
@@ -710,6 +726,90 @@ export class Keyring {
     }
     this.wrappedDomainKeySet = set;
     this.attachDomainKeysToMaterial();
+  }
+
+  /**
+   * Wrap the requested scope keys to one device. The account identity key is
+   * the sender. Raw domain keys stay off the returned grant.
+   */
+  async sealAuthorizedDomainGrant(input: {
+    scopes: readonly DomainScope[];
+    recipientPublicKey: Uint8Array;
+    deviceId: string;
+  }): Promise<AuthorizedDomainGrantV1> {
+    const aek = this.requireAek();
+    if (!this.wrappedIdentityPrivateKey || !this.identityPublicKeyBase64) {
+      throw new Error('Domain grant requires an account identity key');
+    }
+    await this.ensureDomainKeys();
+    const privateKey = await aesGcmDecrypt(this.wrappedIdentityPrivateKey, aek);
+    try {
+      return await sealAuthorizedDomainKeys({
+        secrets: [...this.domainSecrets.values()],
+        scopes: input.scopes,
+        senderPrivateKey: privateKey,
+        senderPublicKey: publicKeyFromBase64(this.identityPublicKeyBase64),
+        recipientPublicKey: input.recipientPublicKey,
+        deviceId: input.deviceId,
+      });
+    } finally {
+      wipe(privateKey);
+    }
+  }
+
+  /** Install domain keys from a grant. Does not require the AEK. */
+  importGrantedDomainKeys(secrets: readonly DomainKeySecret[]): void {
+    if (secrets.length < 1) throw new Error('Domain grant is empty');
+    for (const secret of secrets) {
+      if (!isDomainScope(secret.scope) || secret.key.length !== 32) {
+        throw new Error('Domain grant secret is invalid');
+      }
+      const epoch = secret.epoch;
+      const keyId = domainKeyId(secret.key, secret.scope, epoch);
+      if (keyId !== secret.keyId) {
+        throw new Error('Domain grant secret is invalid');
+      }
+      const existing = this.domainSecrets.get(secret.scope);
+      if (existing) wipe(existing.key);
+      this.domainSecrets.set(secret.scope, {
+        scope: secret.scope,
+        epoch,
+        keyId,
+        key: new Uint8Array(secret.key),
+      });
+    }
+  }
+
+  /**
+   * Client-generated paper key wrapping this AEK. The recovery blob is not
+   * modified.
+   */
+  async createPaperRecovery(): Promise<{
+    paperKey: Uint8Array;
+    wrap: PaperRecoveryWrapV1;
+  }> {
+    const aek = this.exportAek();
+    try {
+      const paperKey = generatePaperRecoveryKey();
+      const wrap = await wrapAekWithPaperKey(aek, paperKey);
+      return { paperKey, wrap };
+    } finally {
+      wipe(aek);
+    }
+  }
+
+  /** Open the same AEK from a paper key. The master-password material stays. */
+  async unlockWithPaper(
+    paperKey: Uint8Array,
+    wrap: PaperRecoveryWrapV1,
+    material: KeyringMaterial,
+  ): Promise<void> {
+    const aek = await unwrapAekWithPaperKey(paperKey, wrap);
+    try {
+      await this.unlockWithAek(aek, material);
+    } finally {
+      wipe(aek);
+    }
   }
 
   async ensureDomainKeys(): Promise<DomainKeySetV1> {

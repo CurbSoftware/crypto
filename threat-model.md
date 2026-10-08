@@ -26,9 +26,12 @@ identity documents make that detectable. Cannot mint a valid AEK verifier.
 
 Each scope has its own random key, wrapped by the AEK. A version 3 envelope
 also carries that wrap, so anyone who holds the AEK can open every scope. A
-client that holds only one domain key cannot open the others. Grants that
-deliver a single domain key are not issued by this package yet. The recovery
-blob stays version 1 and does not include the domain-key set.
+client that holds only one domain key cannot open the others. An authorized
+domain grant delivers some of those keys to a device public key. Anyone who
+holds the AEK can still open every scope from the envelope wrap. A paper
+recovery key wraps that same AEK outside `EncryptedRecoveryBlobV1`. The
+recovery blob stays version 1 and does not include the domain-key set or the
+paper wrap.
 
 ### Stolen browser profile (auto-unlock)
 

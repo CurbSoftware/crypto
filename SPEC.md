@@ -79,6 +79,23 @@ server row revision. Version 1 envelopes and `EncryptedRecoveryBlobV1` are
 unchanged. Domain-key lookup info is `curbapps/lookup/domain/v1\0` + scope,
 which is not the account lookup info `curbapps/lookup/v1`.
 
+### Authorized domain grant
+
+`AuthorizedDomainGrantV1` wraps one or more domain keys to a recipient X25519
+public key with ECDH v2. The purpose is `domain-key-grant`, the grant id is
+the device id, and the entity id is the scope. The grant JSON contains key
+ids and AES-KW ciphertext. It does not contain the raw domain key. An AEK
+holder can still open every version 3 envelope, because each envelope carries
+its own AEK wrap.
+
+### Paper recovery
+
+A client generates 32 random bytes. HKDF-SHA256 with info
+`curbapps/paper-recovery/v1` and a 16-byte salt derives an AES-KW key for the
+same AEK. The wrap is `PaperRecoveryWrapV1`. It is not a field of
+`EncryptedRecoveryBlobV1`. The master-password blob and its ETag input stay
+the same. The server stores the wrap and never sees the paper key or the AEK.
+
 ### WrappedAccountKeyV1
 
 AES-KW-256 of the AEK under MK, plus an AEK verifier envelope. Verifier AAD

@@ -1,6 +1,6 @@
 {
   "name": "@curbapps/crypto",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Auditable end-to-end encryption for CurbApps: Argon2id, AES-256-GCM, XChaCha20-Poly1305, X25519, and Ed25519.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/CurbSoftware/crypto",
@@ -54,6 +54,7 @@
     "./lookup": "./src/lookup.ts",
     "./opaque": "./src/opaque.ts",
     "./operators": "./src/operators.ts",
+    "./paper-recovery": "./src/paper-recovery.ts",
     "./password-payload": "./src/password-payload.ts",
     "./room": "./src/room.ts",
     "./sealed-file": "./src/sealed-file.ts",
